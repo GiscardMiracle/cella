@@ -21,6 +21,7 @@ class Opportunity:
     status: str         # "open", "closed"
     created_by: int     # discord user id of the creator
     created_at: datetime
+    role_id: int          # discord role id for the opportunity
 
 @dataclass
 class Interest:
