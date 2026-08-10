@@ -16,6 +16,7 @@ def get_connection():
     global _connection
     if _connection is None:
         _connection = sqlite3.connect(DB_PATH)
+    _connection.row_factory = sqlite3.Row  # Enable named column access
     return _connection
 
 def initialize_database():
@@ -26,7 +27,7 @@ def initialize_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS opportunities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
             description TEXT NOT NULL,
             link TEXT NOT NULL,
             deadline DATETIME NOT NULL,
