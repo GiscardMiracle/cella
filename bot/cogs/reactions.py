@@ -5,7 +5,10 @@ the reactor access to that opportunity's channel.
 Author: Giscard Adjanon
 """
 
+from enum import member
+
 import discord
+from discord import guild
 from discord.ext import commands
 
 from bot.config import config
@@ -29,6 +32,22 @@ class ReactionsCog(commands.Cog):
             return
 
         await opportunity_service.mark_interested(payload.member, opportunity)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        if payload.channel_id != config.opportunities_channel_id:
+            return
+
+        opportunity = queries.get_opportunity_by_message_id(payload.message_id)
+        if opportunity is None or opportunity.status != "open":
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        member = guild.get_member(payload.user_id) if guild else None
+        if member is None or member.bot:
+            return
+
+        await opportunity_service.remove_interested(member, opportunity)
 
 
 async def setup(bot: commands.Bot):

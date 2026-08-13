@@ -133,3 +133,10 @@ async def close_opportunity(
     opportunity.status = "closed"
     await message.edit(embed=embeds.build_opportunity_embed(opportunity))
     return True
+
+async def remove_interested(member: discord.Member, opportunity: Opportunity) -> bool:
+    """Revoke channel access and remove the interest record."""
+    role = member.guild.get_role(opportunity.role_id)
+    if role is not None and not await permissions.revoke_access(member, role):
+        return False
+    return queries.remove_interest(opportunity.id, member.id)
