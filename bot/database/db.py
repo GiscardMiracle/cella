@@ -33,6 +33,7 @@ def initialize_database():
             deadline DATETIME NOT NULL,
             message_id INTEGER NOT NULL,
             channel_id INTEGER NOT NULL,
+            role_id INTEGER NOT NULL,
             status TEXT NOT NULL,
             created_by INTEGER NOT NULL,
             created_at DATETIME NOT NULL

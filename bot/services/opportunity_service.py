@@ -94,7 +94,14 @@ async def create_opportunity(
         created_by=created_by,
         created_at=created_at,
     )
-    saved = queries.create_opportunity(final)
+
+    try:
+        saved = queries.create_opportunity(final)
+    except Exception:
+        await role.delete()
+        await channel.delete()
+        await message.delete()
+        raise
 
     if saved is None:
         await role.delete()
@@ -133,6 +140,7 @@ async def close_opportunity(
     opportunity.status = "closed"
     await message.edit(embed=embeds.build_opportunity_embed(opportunity))
     return True
+
 
 async def remove_interested(member: discord.Member, opportunity: Opportunity) -> bool:
     """Revoke channel access and remove the interest record."""
