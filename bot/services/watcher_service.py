@@ -5,6 +5,7 @@ announcements against what Cella has already seen.
 Author: Giscard Adjanon
 """
 
+import logging
 import re
 from datetime import datetime
 from typing import Optional
@@ -19,6 +20,8 @@ from bot.database.models import Announcement
 BASE_URL = "https://enseignementsuperieur.gouv.bj"
 USER_AGENT = "CellaBot/1.0 (+scholarship tracker for a Discord community)"
 REQUEST_TIMEOUT_SECONDS = 15
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_listing_date(date_text: Optional[str]) -> Optional[datetime]:
@@ -72,9 +75,13 @@ async def _fetch_listing_html(url: str) -> Optional[str]:
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url) as response:
                 if response.status != 200:
+                    logger.warning(
+                        "Watcher: listing page returned HTTP %d for %s", response.status, url
+                    )
                     return None
                 return await response.text()
-    except aiohttp.ClientError:
+    except aiohttp.ClientError as error:
+        logger.warning("Watcher: failed to reach listing page %s: %s", url, error)
         return None
 
 
@@ -93,14 +100,25 @@ async def get_new_announcements(watch_url: str) -> list[Announcement]:
 
     fetched = parse_listing_html(html)
     if not fetched:
+        logger.warning(
+            "Watcher: no announcements found on %s - the page's structure may have changed.",
+            watch_url,
+        )
         return []
 
     is_first_run = queries.count_watched_announcements() == 0
     if is_first_run:
         queries.save_watched_announcements(fetched)
+        logger.info(
+            "Watcher: first run, recorded %d announcement(s) as the baseline (nothing posted).",
+            len(fetched),
+        )
         return []
 
     known_ids = queries.get_watched_announcement_ids()
     new_announcements = [a for a in fetched if a.id not in known_ids]
     queries.save_watched_announcements(new_announcements)
+    logger.info(
+        "Watcher: checked %d listed announcement(s), %d new.", len(fetched), len(new_announcements)
+    )
     return new_announcements

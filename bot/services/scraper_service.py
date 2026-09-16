@@ -12,6 +12,7 @@ Author: Giscard Adjanon
 """
 
 import io
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin
@@ -24,6 +25,8 @@ USER_AGENT = "CellaBot/1.0 (+scholarship tracker for a Discord community)"
 REQUEST_TIMEOUT_SECONDS = 15
 MIN_MEANINGFUL_TEXT_LENGTH = 200
 SECTION_CAPTURE_LENGTH = 500
+
+logger = logging.getLogger(__name__)
 
 KEYWORDS: dict[str, list[str]] = {
     "Pièces à fournir": [
@@ -118,9 +121,11 @@ async def _fetch(
     try:
         async with session.get(url) as response:
             if response.status != 200:
+                logger.warning("Scraper: %s returned HTTP %d", url, response.status)
                 return None, None
             return await response.read(), response.content_type
-    except aiohttp.ClientError:
+    except aiohttp.ClientError as error:
+        logger.warning("Scraper: failed to reach %s: %s", url, error)
         return None, None
 
 
@@ -164,6 +169,7 @@ async def scrape_opportunity(url: str) -> ScrapedInfo:
     try:
         text, pdf_link, note = await _fetch_and_extract_text(url)
     except Exception:
+        logger.exception("Scraper: unexpected error while scraping %s", url)
         return ScrapedInfo(source_url=url, note="Erreur inattendue pendant l'extraction.")
 
     sections = extract_sections(text)
@@ -172,6 +178,7 @@ async def scrape_opportunity(url: str) -> ScrapedInfo:
         try:
             pdf_text, _, pdf_note = await _fetch_and_extract_text(pdf_link)
         except Exception:
+            logger.exception("Scraper: unexpected error while scraping linked PDF %s", pdf_link)
             pdf_text, pdf_note = "", "Erreur inattendue pendant l'extraction du PDF."
 
         pdf_sections = extract_sections(pdf_text)
@@ -182,5 +189,8 @@ async def scrape_opportunity(url: str) -> ScrapedInfo:
 
     if not sections and note is None:
         note = "Aucune information clé détectée automatiquement."
+
+    if note:
+        logger.info("Scraper: %s -> %s", url, note)
 
     return ScrapedInfo(source_url=url, sections=sections, note=note)

@@ -37,7 +37,9 @@ class CellaBot(commands.Bot):
 
 def main():
     bot = CellaBot()
-    bot.run(config.discord_token)
+    # root_logger=True so our own loggers (bot.services.*, bot.cogs.*) get the
+    # same handler/format as discord.py's, not just the "discord" logger tree.
+    bot.run(config.discord_token, root_logger=True)
 
 
 if __name__ == "__main__":
