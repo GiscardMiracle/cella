@@ -14,6 +14,7 @@ EXTENSIONS = [
     "bot.cogs.opportunities",
     "bot.cogs.reactions",
     "bot.cogs.scheduler",
+    "bot.cogs.watcher",
 ]
 
 

@@ -8,6 +8,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from dataclasses import dataclass
+from typing import Optional
 
 load_dotenv()
 
@@ -17,6 +18,8 @@ class Config:
     guild_id: int
     category_id: int                    # id of the category where opportunity channels will be created
     opportunities_channel_id: int       # id of the channel where opportunities will be posted
+    watch_url: Optional[str]            # ministry listing page to watch for new scholarship announcements
+    watch_interval_hours: int           # how often to check watch_url
 
 def _require(var_name: str) -> str:
     """Retrieve an environment variable or exit if not found."""
@@ -31,7 +34,9 @@ def load_config() -> Config:
         discord_token=_require("DISCORD_TOKEN"),
         guild_id=int(_require("GUILD_ID")),
         category_id=int(_require("CATEGORY_ID")),
-        opportunities_channel_id=int(_require("OPPORTUNITIES_CHANNEL_ID"))
+        opportunities_channel_id=int(_require("OPPORTUNITIES_CHANNEL_ID")),
+        watch_url=os.getenv("WATCH_URL"),
+        watch_interval_hours=int(os.getenv("WATCH_INTERVAL_HOURS", "6")),
     )
 
 config = load_config()
