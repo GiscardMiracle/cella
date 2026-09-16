@@ -5,6 +5,7 @@ posting, and DB persistence for opportunities.
 Author: Giscard Adjanon
 """
 
+import asyncio
 import re
 import secrets
 from datetime import datetime
@@ -14,6 +15,7 @@ import discord
 
 from bot.database import queries
 from bot.database.models import Interest, Opportunity
+from bot.services import scraper_service
 from bot.utils import embeds, permissions
 
 
@@ -109,7 +111,22 @@ async def create_opportunity(
         await message.delete()
         return None
 
+    asyncio.create_task(_post_scraped_info(channel, saved.link))
+
     return saved
+
+
+async def _post_scraped_info(channel: discord.TextChannel, link: str) -> None:
+    """Best-effort: post auto-extracted info as the channel's first message.
+    Runs in the background so opportunity creation never waits on it, and
+    never raises - a failed scrape just means no info message gets posted."""
+    try:
+        info = await scraper_service.scrape_opportunity(link)
+        await channel.send(
+            embed=embeds.build_scraped_info_embed(info.source_url, info.sections, info.note)
+        )
+    except discord.HTTPException:
+        pass
 
 
 async def mark_interested(member: discord.Member, opportunity: Opportunity) -> bool:
