@@ -1,3 +1,5 @@
 discord.py
 python-dotenv
 dateparser
+beautifulsoup4
+pypdf
