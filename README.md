@@ -18,11 +18,14 @@ Scholarship opportunities move fast between friends: someone finds one, shares a
 - **Smart reminders** — a DM every month, switching to every two weeks once the deadline is within reach, so you never miss the window
 - **Auto-lock at deadline** — opportunities close themselves, no manual cleanup
 - **Urgency at a glance** — the opportunity's embed shifts 🟢 → 🟠 → 🔴 as the deadline approaches
+- **Auto-discovery** — periodically checks a watched listing page (e.g. the ministry's scholarship announcements) and posts new ones in `#opportunities` as soon as they appear, keeping a baseline state so it never floods the channel with what was already there
+- **Auto-extracted info** — when an opportunity is created, its link is scraped for key info (required documents, eligibility, deadline mentions) and posted as the dedicated channel's first message; degrades gracefully (with a clear note) when the link is a scanned PDF or otherwise has nothing extractable
 
 ## Tech stack
 
 - Python 3.12+ / [discord.py](https://discordpy.readthedocs.io/) (slash commands, modals, raw gateway events)
 - SQLite for storage — no external database to run
+- `beautifulsoup4` / `pypdf` for scraping opportunity links and watched pages (no paid APIs)
 - `systemd` for process management in production
 
 ## Architecture
@@ -32,9 +35,9 @@ bot/
 ├── main.py            # entry point
 ├── config.py           # env-based configuration
 ├── database/           # models, schema, CRUD
-├── cogs/                # slash commands, reaction listener, daily scheduler
+├── cogs/                # slash commands, reaction listener, daily scheduler, listing watcher
 ├── ui/                  # the opportunity creation modal
-├── services/            # orchestration: opportunity lifecycle, reminder logic
+├── services/            # orchestration: opportunity lifecycle, reminder logic, scraping, watching
 └── utils/                # Discord permissions & embed builders
 ```
 
@@ -53,6 +56,14 @@ python3 -m bot.main
 ```
 
 You'll need a Discord application with a bot user, the **Server Members** privileged intent enabled, and the bot invited with `Manage Roles`, `Manage Channels`, `Send Messages`, `Read Message History`, `Add Reactions`, and `Embed Links`.
+
+Optional env vars for the listing watcher: `WATCH_URL` (a listing page to poll for new announcements — omit to disable) and `WATCH_INTERVAL_HOURS` (default `6`).
+
+## Tests
+
+```bash
+python -m unittest discover -s tests
+```
 
 ## Author
 
