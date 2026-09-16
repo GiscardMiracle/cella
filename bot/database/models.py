@@ -30,3 +30,12 @@ class Interest:
     user_id: int
     interested_at: datetime
     last_reminder_at: Optional[datetime] = None
+
+@dataclass
+class Announcement:
+    """Represents a scholarship announcement discovered on a watched listing page."""
+    id: str                            # id extracted from the source page's URL
+    title: str
+    link: str
+    published_at: Optional[datetime]   # date shown on the listing page, if any
+    discovered_at: datetime            # when Cella first saw it

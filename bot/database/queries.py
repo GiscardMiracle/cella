@@ -9,7 +9,7 @@ import sqlite3
 from typing import Optional
 
 from bot.database.db import get_connection
-from bot.database.models import Interest, Opportunity
+from bot.database.models import Announcement, Interest, Opportunity
 
 
 def _row_to_opportunity(row: sqlite3.Row) -> Opportunity:
@@ -207,3 +207,48 @@ def update_last_reminder(
     )
     connection.commit()
     return cursor.rowcount > 0
+
+
+def count_watched_announcements() -> int:
+    """Count how many announcements have ever been recorded (0 means no baseline yet)."""
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT COUNT(*) AS count FROM watched_announcements")
+    return cursor.fetchone()["count"]
+
+
+def get_watched_announcement_ids() -> set[str]:
+    """Return the ids of all announcements seen so far."""
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT id FROM watched_announcements")
+    return {row["id"] for row in cursor.fetchall()}
+
+
+def save_watched_announcements(announcements: list[Announcement]) -> None:
+    """Record announcements as seen. Existing ids are left untouched."""
+    if not announcements:
+        return
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.executemany(
+        """
+        INSERT OR IGNORE INTO watched_announcements (id, title, link, published_at, discovered_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                announcement.id,
+                announcement.title,
+                announcement.link,
+                announcement.published_at.isoformat() if announcement.published_at else None,
+                announcement.discovered_at.isoformat(),
+            )
+            for announcement in announcements
+        ],
+    )
+    connection.commit()

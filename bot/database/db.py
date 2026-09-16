@@ -50,4 +50,14 @@ def initialize_database():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS watched_announcements (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            link TEXT NOT NULL,
+            published_at DATETIME,
+            discovered_at DATETIME NOT NULL
+        )
+    """)
+
     connection.commit()
