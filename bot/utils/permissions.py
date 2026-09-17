@@ -34,6 +34,7 @@ async def setup_channel_permissions(channel: discord.TextChannel, role: discord.
         overwrite.send_messages = True
 
         await channel.set_permissions(role, overwrite=overwrite)
+        await channel.set_permissions(channel.guild.me, overwrite=overwrite)
         await channel.set_permissions(channel.guild.default_role, overwrite=everyone_overwrite)
         return True
     except discord.Forbidden:
