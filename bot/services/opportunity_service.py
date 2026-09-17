@@ -6,6 +6,7 @@ Author: Giscard Adjanon
 """
 
 import asyncio
+import logging
 import re
 import secrets
 from datetime import datetime
@@ -17,6 +18,14 @@ from bot.database import queries
 from bot.database.models import Interest, Opportunity
 from bot.services import scraper_service
 from bot.utils import embeds, permissions
+
+logger = logging.getLogger(__name__)
+
+# asyncio only keeps a *weak* reference to tasks - one with no other
+# reference can be garbage-collected before it ever runs, silently. This
+# set holds a strong reference to background scrape tasks until they're
+# done, as recommended by the asyncio docs.
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _slugify(name: str) -> str:
@@ -111,7 +120,9 @@ async def create_opportunity(
         await message.delete()
         return None
 
-    asyncio.create_task(_post_scraped_info(channel, saved.link))
+    task = asyncio.create_task(_post_scraped_info(channel, saved.link))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return saved
 
@@ -125,8 +136,8 @@ async def _post_scraped_info(channel: discord.TextChannel, link: str) -> None:
         await channel.send(
             embed=embeds.build_scraped_info_embed(info.source_url, info.sections, info.note)
         )
-    except discord.HTTPException:
-        pass
+    except Exception:
+        logger.exception("Failed to post auto-extracted info in channel %d", channel.id)
 
 
 async def mark_interested(member: discord.Member, opportunity: Opportunity) -> bool:
