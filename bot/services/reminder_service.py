@@ -6,6 +6,8 @@ Author: Giscard Adjanon
 
 from datetime import timedelta
 
+FINAL_REMINDER_DAYS = (2, 5)
+
 def should_send_reminder(interested_at, last_reminder_at, deadline, current_time):
     """
     Determine if a reminder should be sent to the user based on their interest and the opportunity's deadline.
@@ -13,6 +15,10 @@ def should_send_reminder(interested_at, last_reminder_at, deadline, current_time
     """
     if current_time >= deadline:
         return False, last_reminder_at
+    for days in FINAL_REMINDER_DAYS:
+        threshold = deadline - timedelta(days=days)
+        if current_time >= threshold and interested_at < threshold and (last_reminder_at is None or last_reminder_at < threshold):
+            return True, current_time
     if last_reminder_at is None:
         if current_time >= interested_at + timedelta(days=10): # First reminder after 10 days of interest
             return True, current_time

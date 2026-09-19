@@ -15,7 +15,7 @@ Scholarship opportunities move fast between friends: someone finds one, shares a
 - **`/opportunity-add`** — a proper form (name, description, link, deadline), no arguments to memorize
 - **React to join** — reacting to an opportunity's post silently grants you a dedicated, private channel for that opportunity
 - **`/opportunity-members`** — see who's in, at a glance
-- **Smart reminders** — a DM every month, switching to every two weeks once the deadline is within reach, so you never miss the window
+- **Smart reminders** — a DM every month, switching to every two weeks once the deadline is within reach, plus a final DM at 5 days and at 2 days before the deadline, so you never miss the window
 - **Auto-lock at deadline** — opportunities close themselves, no manual cleanup
 - **Urgency at a glance** — the opportunity's embed shifts 🟢 → 🟠 → 🔴 as the deadline approaches
 - **Auto-discovery** — periodically checks a watched listing page (e.g. the ministry's scholarship announcements) and posts new ones in `#opportunities` as soon as they appear, keeping a baseline state so it never floods the channel with what was already there

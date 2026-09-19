@@ -69,5 +69,56 @@ class RecurringReminderTests(unittest.TestCase):
         self.assertFalse(sent)
 
 
+class FinalReminderTests(unittest.TestCase):
+    def test_sent_once_deadline_is_within_five_days(self):
+        sent, new_last = should_send_reminder(
+            NOW - timedelta(days=30), NOW - timedelta(days=10), NOW + timedelta(days=4), NOW
+        )
+        self.assertTrue(sent)
+        self.assertEqual(new_last, NOW)
+
+    def test_not_sent_while_deadline_is_more_than_five_days_away(self):
+        sent, _ = should_send_reminder(
+            NOW - timedelta(days=30), NOW - timedelta(days=10), NOW + timedelta(days=6), NOW
+        )
+        self.assertFalse(sent)
+
+    def test_five_day_reminder_not_repeated(self):
+        sent, _ = should_send_reminder(
+            NOW - timedelta(days=30), NOW - timedelta(hours=1), NOW + timedelta(days=4), NOW
+        )
+        self.assertFalse(sent)
+
+    def test_two_day_reminder_sent_after_five_day_one(self):
+        sent, new_last = should_send_reminder(
+            NOW - timedelta(days=30), NOW - timedelta(days=3), NOW + timedelta(days=1), NOW
+        )
+        self.assertTrue(sent)
+        self.assertEqual(new_last, NOW)
+
+    def test_two_day_reminder_not_repeated(self):
+        sent, _ = should_send_reminder(
+            NOW - timedelta(days=30), NOW - timedelta(hours=1), NOW + timedelta(days=1), NOW
+        )
+        self.assertFalse(sent)
+
+    def test_single_reminder_when_both_thresholds_were_missed(self):
+        args = (NOW - timedelta(days=30), NOW - timedelta(days=10), NOW + timedelta(days=1))
+        self.assertTrue(should_send_reminder(*args, NOW)[0])
+        self.assertFalse(should_send_reminder(args[0], NOW, args[2], NOW)[0])
+
+    def test_never_reminded_member_gets_five_day_reminder(self):
+        sent, _ = should_send_reminder(
+            NOW - timedelta(days=30), None, NOW + timedelta(days=4), NOW
+        )
+        self.assertTrue(sent)
+
+    def test_member_who_joined_after_the_threshold_is_not_pinged_right_away(self):
+        sent, _ = should_send_reminder(
+            NOW - timedelta(hours=1), None, NOW + timedelta(days=1), NOW
+        )
+        self.assertFalse(sent)
+
+
 if __name__ == "__main__":
     unittest.main()
