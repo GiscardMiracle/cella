@@ -19,13 +19,14 @@ Scholarship opportunities move fast between friends: someone finds one, shares a
 - **Auto-close at deadline** — opportunities are marked closed on their own, no manual cleanup; the channel stays open so members can keep sharing news
 - **Urgency at a glance** — the opportunity's embed shifts 🟢 → 🟠 → 🔴 as the deadline approaches
 - **Auto-discovery** — periodically checks a watched listing page (e.g. the ministry's scholarship announcements) and posts new ones in `#opportunities` as soon as they appear, keeping a baseline state so it never floods the channel with what was already there
-- **Auto-extracted info** — when an opportunity is created, its link is scraped for key info (required documents, eligibility, deadline mentions) and posted as the dedicated channel's first message; degrades gracefully (with a clear note) when the link is a scanned PDF or otherwise has nothing extractable
+- **Auto-extracted info** — when an opportunity is created, its link is read (the page, plus the PDFs and "eligibility"-style pages it points to) and the key info — documents to provide, eligibility, deadline, benefits, how to apply — is posted as the dedicated channel's first message. With a free Gemini API key it reads any layout and even scanned PDFs; without one (or if the API is unavailable) it falls back to a keyword-based extractor, and says so clearly when nothing can be extracted
 
 ## Tech stack
 
 - Python 3.12+ / [discord.py](https://discordpy.readthedocs.io/) (slash commands, modals, raw gateway events)
 - SQLite for storage — no external database to run
-- `beautifulsoup4` / `pypdf` for scraping opportunity links and watched pages (no paid APIs)
+- `beautifulsoup4` / `pypdf` for scraping opportunity links and watched pages
+- Optional [Gemini API](https://ai.google.dev/) free tier for AI extraction — no billing account, nothing to pay
 - `systemd` for process management in production
 
 ## Architecture
@@ -57,7 +58,10 @@ python3 -m bot.main
 
 You'll need a Discord application with a bot user, the **Server Members** privileged intent enabled, and the bot invited with `Manage Roles`, `Manage Channels`, `Send Messages`, `Read Message History`, `Add Reactions`, and `Embed Links`.
 
-Optional env vars for the listing watcher: `WATCH_URL` (a listing page to poll for new announcements — omit to disable) and `WATCH_INTERVAL_HOURS` (default `6`).
+Optional env vars:
+
+- `WATCH_URL` — a listing page to poll for new announcements (omit to disable the watcher), and `WATCH_INTERVAL_HOURS` (default `6`).
+- `GEMINI_API_KEY` — a free key from [Google AI Studio](https://aistudio.google.com/apikey) (no billing account needed) to enable AI extraction of opportunity info. Omit it and Cella uses its keyword extractor. `GEMINI_MODEL` overrides the default model.
 
 ## Tests
 

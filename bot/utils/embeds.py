@@ -67,7 +67,10 @@ def build_announcement_embed(announcement: Announcement) -> discord.Embed:
 
 
 def build_scraped_info_embed(
-    source_url: str, sections: dict[str, str], note: "str | None"
+    source_url: str,
+    sections: dict[str, str],
+    note: "str | None",
+    ai_generated: bool = False,
 ) -> discord.Embed:
     """
     Build a Discord embed presenting info auto-extracted from an opportunity's link.
@@ -82,5 +85,7 @@ def build_scraped_info_embed(
             embed.add_field(name=label, value=excerpt[:1024], inline=False)
     else:
         embed.description = note or "Aucune information n'a pu être extraite automatiquement."
-    embed.set_footer(text="À vérifier sur le lien original avant de constituer votre dossier.")
+
+    origin = "Résumé généré par IA (Gemini). " if ai_generated else ""
+    embed.set_footer(text=f"{origin}À vérifier sur le lien original avant de constituer votre dossier.")
     return embed

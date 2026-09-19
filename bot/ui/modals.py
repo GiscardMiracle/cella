@@ -55,6 +55,8 @@ class OpportunityAddModal(discord.ui.Modal, title="New Opportunity"):
             link=self.link.value,
             deadline=parsed_deadline,
             created_by=interaction.user.id,
+            gemini_api_key=config.gemini_api_key,
+            gemini_model=config.gemini_model,
         )
 
         if opportunity is None:

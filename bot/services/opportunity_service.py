@@ -43,6 +43,8 @@ async def create_opportunity(
     link: str,
     deadline: datetime,
     created_by: int,
+    gemini_api_key: Optional[str] = None,
+    gemini_model: Optional[str] = None,
 ) -> Optional[Opportunity]:
     """Create a full opportunity: role, channel, embed message, DB row.
     Returns None (and cleans up any partial Discord state) on failure."""
@@ -120,21 +122,32 @@ async def create_opportunity(
         await message.delete()
         return None
 
-    task = asyncio.create_task(_post_scraped_info(channel, saved.link))
+    task = asyncio.create_task(
+        _post_scraped_info(channel, saved.link, gemini_api_key, gemini_model)
+    )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
     return saved
 
 
-async def _post_scraped_info(channel: discord.TextChannel, link: str) -> None:
+async def _post_scraped_info(
+    channel: discord.TextChannel,
+    link: str,
+    gemini_api_key: Optional[str],
+    gemini_model: Optional[str],
+) -> None:
     """Best-effort: post auto-extracted info as the channel's first message.
     Runs in the background so opportunity creation never waits on it, and
     never raises - a failed scrape just means no info message gets posted."""
     try:
-        info = await scraper_service.scrape_opportunity(link)
+        info = await scraper_service.scrape_opportunity(
+            link, gemini_api_key=gemini_api_key, gemini_model=gemini_model
+        )
         await channel.send(
-            embed=embeds.build_scraped_info_embed(info.source_url, info.sections, info.note)
+            embed=embeds.build_scraped_info_embed(
+                info.source_url, info.sections, info.note, info.ai_generated
+            )
         )
     except Exception:
         logger.exception("Failed to post auto-extracted info in channel %d", channel.id)

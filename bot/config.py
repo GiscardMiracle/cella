@@ -20,6 +20,8 @@ class Config:
     opportunities_channel_id: int       # id of the channel where opportunities will be posted
     watch_url: Optional[str]            # ministry listing page to watch for new scholarship announcements
     watch_interval_hours: int           # how often to check watch_url
+    gemini_api_key: Optional[str]       # enables AI extraction of opportunity info (free tier); keyword extraction otherwise
+    gemini_model: Optional[str]         # overrides the default Gemini model
 
 def _require(var_name: str) -> str:
     """Retrieve an environment variable or exit if not found."""
@@ -37,6 +39,8 @@ def load_config() -> Config:
         opportunities_channel_id=int(_require("OPPORTUNITIES_CHANNEL_ID")),
         watch_url=os.getenv("WATCH_URL"),
         watch_interval_hours=int(os.getenv("WATCH_INTERVAL_HOURS", "6")),
+        gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+        gemini_model=os.getenv("GEMINI_MODEL") or None,
     )
 
 config = load_config()
