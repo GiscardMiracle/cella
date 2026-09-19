@@ -1,7 +1,7 @@
 """
 Cella bot - 2026
-Daily scheduler: sends reminder DMs, auto-locks opportunities past their
-deadline, and refreshes embed colours for open ones.
+Daily scheduler: sends reminder DMs, marks opportunities past their
+deadline as closed, and refreshes embed colours for open ones.
 Author: Giscard Adjanon
 """
 
@@ -96,13 +96,15 @@ class SchedulerCog(commands.Cog):
                     "Scheduler: failed to process opportunity %d.", opportunity.id
                 )
 
-    async def _handle_missing_channel(self, opportunity: Opportunity):
+    async def _handle_missing_channel(
+        self, opportunities_channel: discord.TextChannel, opportunity: Opportunity
+    ):
         try:
             await self.bot.fetch_channel(opportunity.channel_id)
         except discord.NotFound:
-            queries.delete_opportunity(opportunity.id)
+            await opportunity_service.remove_opportunity(opportunities_channel, opportunity)
             logger.info(
-                "Scheduler: channel %d of opportunity %d (%s) no longer exists, removed it from the database.",
+                "Scheduler: channel %d of opportunity %d (%s) no longer exists, removed its role, announcement and database entry.",
                 opportunity.channel_id,
                 opportunity.id,
                 opportunity.name,
@@ -128,7 +130,7 @@ class SchedulerCog(commands.Cog):
     ):
         channel = self.bot.get_channel(opportunity.channel_id)
         if channel is None:
-            await self._handle_missing_channel(opportunity)
+            await self._handle_missing_channel(opportunities_channel, opportunity)
             return
 
         try:
@@ -142,16 +144,14 @@ class SchedulerCog(commands.Cog):
             return
 
         if now >= opportunity.deadline:
-            role = channel.guild.get_role(opportunity.role_id)
-            if role is None:
-                logger.warning(
-                    "Scheduler: role %d of opportunity %d not found, cannot close it.",
-                    opportunity.role_id,
-                    opportunity.id,
-                )
-                return
-            if await opportunity_service.close_opportunity(opportunity, channel, role, message):
+            if await opportunity_service.close_opportunity(opportunity, message):
                 logger.info("Scheduler: closed opportunity %d (%s).", opportunity.id, opportunity.name)
+            else:
+                logger.warning(
+                    "Scheduler: could not close opportunity %d (%s), will retry.",
+                    opportunity.id,
+                    opportunity.name,
+                )
             return
 
         current_colour = message.embeds[0].colour if message.embeds else None

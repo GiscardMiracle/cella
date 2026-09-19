@@ -65,16 +65,3 @@ async def revoke_access(member: discord.Member, role: discord.Role):
     except Exception as e:
         print(f"Error occurred while revoking access from {member}: {e}")
         return False
-
-async def lock_channel(channel: discord.TextChannel, role: discord.Role):
-    try:
-        overwrite = discord.PermissionOverwrite()
-        overwrite.send_messages = False
-        await channel.set_permissions(role, overwrite=overwrite)
-        return True
-    except discord.Forbidden:
-        print(f"Cella does not have permission to lock the channel {channel}.")
-        return False
-    except Exception as e:
-        print(f"Error occurred while locking the channel {channel}: {e}")
-        return False

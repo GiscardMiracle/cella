@@ -153,21 +153,35 @@ async def mark_interested(member: discord.Member, opportunity: Opportunity) -> b
     return queries.add_interest(interest)
 
 
-async def close_opportunity(
-    opportunity: Opportunity,
-    channel: discord.TextChannel,
-    role: discord.Role,
-    message: discord.Message,
-) -> bool:
-    """Lock the channel, mark closed in DB, refresh the embed."""
-    if not await permissions.lock_channel(channel, role):
-        return False
+async def close_opportunity(opportunity: Opportunity, message: discord.Message) -> bool:
+    """Mark closed in DB and refresh the embed. The channel stays open so
+    members can keep discussing."""
     if not queries.update_opportunity_status(opportunity.id, "closed"):
         return False
 
     opportunity.status = "closed"
     await message.edit(embed=embeds.build_opportunity_embed(opportunity))
     return True
+
+
+async def remove_opportunity(
+    opportunities_channel: discord.TextChannel, opportunity: Opportunity
+) -> bool:
+    """Delete an opportunity's role and announcement message, then its DB row.
+    The DB row goes last so a failed Discord cleanup is retried on the next run."""
+    role = opportunities_channel.guild.get_role(opportunity.role_id)
+    if role is not None:
+        try:
+            await role.delete()
+        except discord.NotFound:
+            pass
+
+    try:
+        await opportunities_channel.get_partial_message(opportunity.message_id).delete()
+    except discord.NotFound:
+        pass
+
+    return queries.delete_opportunity(opportunity.id)
 
 
 async def remove_interested(member: discord.Member, opportunity: Opportunity) -> bool:
