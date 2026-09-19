@@ -114,6 +114,17 @@ def list_open_opportunities() -> list[Opportunity]:
     return [_row_to_opportunity(row) for row in rows]
 
 
+def delete_opportunity(opportunity_id: int) -> bool:
+    """Delete an opportunity along with the interests recorded for it."""
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("DELETE FROM interests WHERE opportunity_id = ?", (opportunity_id,))
+    cursor.execute("DELETE FROM opportunities WHERE id = ?", (opportunity_id,))
+    connection.commit()
+    return cursor.rowcount > 0
+
+
 def update_opportunity_status(opportunity_id: int, status: str) -> bool:
     """Update the status of an opportunity."""
     connection = get_connection()

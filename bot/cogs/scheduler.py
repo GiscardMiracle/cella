@@ -96,6 +96,30 @@ class SchedulerCog(commands.Cog):
                     "Scheduler: failed to process opportunity %d.", opportunity.id
                 )
 
+    async def _handle_missing_channel(self, opportunity: Opportunity):
+        try:
+            await self.bot.fetch_channel(opportunity.channel_id)
+        except discord.NotFound:
+            queries.delete_opportunity(opportunity.id)
+            logger.info(
+                "Scheduler: channel %d of opportunity %d (%s) no longer exists, removed it from the database.",
+                opportunity.channel_id,
+                opportunity.id,
+                opportunity.name,
+            )
+        except discord.Forbidden:
+            logger.warning(
+                "Scheduler: no access to channel %d of opportunity %d, skipping.",
+                opportunity.channel_id,
+                opportunity.id,
+            )
+        else:
+            logger.warning(
+                "Scheduler: channel %d of opportunity %d exists but is not cached, skipping.",
+                opportunity.channel_id,
+                opportunity.id,
+            )
+
     async def _process_opportunity(
         self,
         opportunities_channel: discord.TextChannel,
@@ -104,11 +128,7 @@ class SchedulerCog(commands.Cog):
     ):
         channel = self.bot.get_channel(opportunity.channel_id)
         if channel is None:
-            logger.warning(
-                "Scheduler: channel %d of opportunity %d not found, skipping.",
-                opportunity.channel_id,
-                opportunity.id,
-            )
+            await self._handle_missing_channel(opportunity)
             return
 
         try:
