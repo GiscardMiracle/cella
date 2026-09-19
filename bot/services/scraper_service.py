@@ -1,68 +1,43 @@
 """
 Cella bot - 2026
-Scraper service: best-effort extraction of key info (required documents,
-eligibility, deadline mentions) from an opportunity's link.
+Scraper service: best-effort extraction of an opportunity's key info
+(documents to provide, eligibility, deadline, benefits, how to apply) from
+its link. It fetches the page, follows the PDFs and "eligibility"-style links
+it finds, then extracts the sections:
 
-Sites have no common structure, so this doesn't try to parse layout - it
-scans the page's plain text for FR/EN keywords that tend to introduce the
-sections we care about, and grabs the text right after them. When the link
-is a PDF with no extractable text (a scan, most commonly), or nothing
-useful was found, it reports that instead of failing.
+    1. with Gemini, when an API key is configured (reads any layout, and
+       scanned PDFs too);
+    2. otherwise, or if Gemini fails, with the keyword extractor.
+
+It never raises: when nothing can be extracted, the result carries a note
+saying why.
 Author: Giscard Adjanon
 """
 
+import asyncio
 import io
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import aiohttp
-from bs4 import BeautifulSoup
 from pypdf import PdfReader
+
+from bot.services import extractor_service, gemini_service
 
 USER_AGENT = "CellaBot/1.0 (+scholarship tracker for a Discord community)"
 REQUEST_TIMEOUT_SECONDS = 15
 MIN_MEANINGFUL_TEXT_LENGTH = 200
-SECTION_CAPTURE_LENGTH = 500
+MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+MAX_FOLLOWED_LINKS = 3
+MAX_PDF_PAGES = 30
+
+_META_CHARSET = re.compile(rb"<meta[^>]+charset=[\"']?([\w-]+)", re.IGNORECASE)
 
 logger = logging.getLogger(__name__)
-
-KEYWORDS: dict[str, list[str]] = {
-    "Pièces à fournir": [
-        "pièces à fournir",
-        "pieces a fournir",
-        "pièces requises",
-        "documents à fournir",
-        "documents requis",
-        "dossier de candidature",
-        "constitution du dossier",
-        "required documents",
-        "documents required",
-        "application requirements",
-        "how to apply",
-    ],
-    "Conditions d'éligibilité": [
-        "conditions d'éligibilité",
-        "conditions d'eligibilite",
-        "critères d'éligibilité",
-        "conditions de candidature",
-        "qui peut postuler",
-        "public cible",
-        "eligibility criteria",
-        "eligibility requirements",
-        "who can apply",
-    ],
-    "Date limite": [
-        "date limite",
-        "date de clôture",
-        "date de cloture",
-        "délai de soumission",
-        "deadline",
-        "closing date",
-        "due date",
-    ],
-}
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 
 @dataclass
@@ -70,127 +45,157 @@ class ScrapedInfo:
     """Result of scraping an opportunity's link."""
     source_url: str
     sections: dict[str, str] = field(default_factory=dict)
-    note: Optional[str] = None  # explains a degraded or empty result
+    note: Optional[str] = None
+    ai_generated: bool = False
 
 
-def extract_sections(text: str) -> dict[str, str]:
-    """Pull out keyword-anchored excerpts from free text. Pure function."""
-    if not text:
-        return {}
-
-    lowered = text.lower()
-    sections: dict[str, str] = {}
-
-    for label, keywords in KEYWORDS.items():
-        for keyword in keywords:
-            index = lowered.find(keyword)
-            if index == -1:
-                continue
-            sections[label] = text[index : index + SECTION_CAPTURE_LENGTH].strip()
-            break  # first matching keyword for this label is enough
-
-    return sections
+@dataclass
+class Page:
+    """One fetched and parsed document (a web page or a PDF)."""
+    url: str
+    text: str = ""
+    pdf: Optional[bytes] = None
+    sections: dict[str, str] = field(default_factory=dict)
+    links: list[str] = field(default_factory=list)
+    is_scan: bool = False
 
 
-def _html_to_text(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-    return soup.get_text(separator="\n", strip=True)
-
-
-def _find_pdf_link(html: str, base_url: str) -> Optional[str]:
-    """Some sites (e.g. government notices) only embed the real content as
-    a linked/embedded PDF, with the surrounding page left mostly empty."""
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.find_all(["a", "embed"]):
-        src = tag.get("href") or tag.get("src")
-        if src and src.lower().endswith(".pdf"):
-            return urljoin(base_url, src)
-    return None
+def _decode_html(content: bytes, header_charset: Optional[str]) -> str:
+    charset = header_charset
+    if charset is None:
+        match = _META_CHARSET.search(content[:4096])
+        charset = match.group(1).decode("ascii", "ignore") if match else "utf-8"
+    try:
+        return content.decode(charset, errors="replace")
+    except LookupError:
+        return content.decode("utf-8", errors="replace")
 
 
 def _pdf_to_text(content: bytes) -> str:
-    reader = PdfReader(io.BytesIO(content))
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join(page.extract_text() or "" for page in reader.pages[:MAX_PDF_PAGES])
+    except Exception:
+        logger.warning("Scraper: could not read a PDF's text.", exc_info=True)
+        return ""
 
 
-async def _fetch(
-    session: aiohttp.ClientSession, url: str
-) -> tuple[Optional[bytes], Optional[str]]:
+def _parse_content(url: str, content: bytes, content_type: Optional[str], charset: Optional[str]) -> Page:
+    """CPU-bound parsing, run in a thread so it never blocks the bot."""
+    if urlparse(url).path.lower().endswith(".pdf") or (content_type and "pdf" in content_type):
+        text = _pdf_to_text(content)
+        if len(text.strip()) < MIN_MEANINGFUL_TEXT_LENGTH:
+            return Page(url=url, pdf=content, is_scan=True)
+        return Page(url=url, text=text, sections=extractor_service.extract_sections_from_text(text))
+
+    html = _decode_html(content, charset)
+    return Page(
+        url=url,
+        text=extractor_service.html_to_text(html),
+        sections=extractor_service.extract_sections_from_html(html),
+        links=extractor_service.find_document_links(html, url),
+    )
+
+
+async def _read_limited(response: aiohttp.ClientResponse, limit: int) -> Optional[bytes]:
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.content.iter_chunked(64 * 1024):
+        size += len(chunk)
+        if size > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _fetch_page(session: aiohttp.ClientSession, url: str) -> Optional[Page]:
     try:
         async with session.get(url) as response:
             if response.status != 200:
                 logger.warning("Scraper: %s returned HTTP %d", url, response.status)
-                return None, None
-            return await response.read(), response.content_type
-    except aiohttp.ClientError as error:
+                return None
+            content = await _read_limited(response, MAX_DOWNLOAD_BYTES)
+            if content is None:
+                logger.warning("Scraper: %s is larger than %d bytes, skipped.", url, MAX_DOWNLOAD_BYTES)
+                return None
+            final_url, content_type, charset = str(response.url), response.content_type, response.charset
+    except (aiohttp.ClientError, asyncio.TimeoutError) as error:
         logger.warning("Scraper: failed to reach %s: %s", url, error)
-        return None, None
+        return None
+
+    return await asyncio.to_thread(_parse_content, final_url, content, content_type, charset)
 
 
-async def _fetch_and_extract_text(url: str) -> tuple[str, Optional[str], Optional[str]]:
-    """
-    Fetch a URL and extract its plain text.
-    Returns (text, pdf_link_found_on_page, note) - pdf_link_found_on_page is
-    only ever set for an HTML page, so callers can follow it as a fallback;
-    note is set when extraction was degraded or failed outright.
-    """
+def _merge_sections(pages: list[Page]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for page in pages:
+        for category, content in page.sections.items():
+            merged.setdefault(category, content)
+    return merged
+
+
+async def _scrape(
+    url: str, gemini_api_key: Optional[str], gemini_model: Optional[str]
+) -> ScrapedInfo:
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
-    headers = {"User-Agent": USER_AGENT}
+    async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": USER_AGENT}) as session:
+        main = await _fetch_page(session, url)
+        if main is None:
+            return ScrapedInfo(source_url=url, note="Le lien n'a pas pu être atteint.")
 
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        content, content_type = await _fetch(session, url)
-        if content is None:
-            return "", None, "Le lien n'a pas pu être atteint."
+        followed = await asyncio.gather(
+            *(_fetch_page(session, link) for link in main.links[:MAX_FOLLOWED_LINKS]),
+            return_exceptions=True,
+        )
 
-        is_pdf = url.lower().endswith(".pdf") or (content_type and "pdf" in content_type)
-        if is_pdf:
-            text = _pdf_to_text(content)
-            if len(text.strip()) < MIN_MEANINGFUL_TEXT_LENGTH:
-                return "", None, "Le PDF lié semble être un scan (pas de texte extractible automatiquement)."
-            return text, None, None
+    pages = [main]
+    for result in followed:
+        if isinstance(result, Page):
+            pages.append(result)
+        elif isinstance(result, Exception):
+            logger.warning("Scraper: a linked page could not be parsed: %s", result)
 
-        html = content.decode("utf-8", errors="ignore")
-        return _html_to_text(html), _find_pdf_link(html, url), None
+    sections: dict[str, str] = {}
+    ai_generated = False
+    if gemini_api_key:
+        documents = [gemini_service.Document(name=page.url, text=page.text, pdf=page.pdf) for page in pages]
+        sections = await gemini_service.extract_sections(documents, gemini_api_key, gemini_model) or {}
+        ai_generated = bool(sections)
+    if not sections:
+        sections = _merge_sections(pages)
+
+    note = None
+    if not sections:
+        if any(page.is_scan for page in pages):
+            note = "Le PDF lié semble être un scan (pas de texte extractible automatiquement)."
+        else:
+            note = "Aucune information clé détectée automatiquement."
+
+    logger.info(
+        "Scraper: %s -> %d section(s) via %s from %d page(s).",
+        url,
+        len(sections),
+        "Gemini" if ai_generated else "keywords",
+        len(pages),
+    )
+    return ScrapedInfo(
+        source_url=url,
+        sections=extractor_service.labelled(sections),
+        note=note,
+        ai_generated=ai_generated,
+    )
 
 
-async def scrape_opportunity(url: str) -> ScrapedInfo:
+async def scrape_opportunity(
+    url: str, *, gemini_api_key: Optional[str] = None, gemini_model: Optional[str] = None
+) -> ScrapedInfo:
     """
     Best-effort extraction. Never raises - callers can post the result
     (sections, or its fallback note) without worrying about network or
     parsing failures.
-
-    Many sites (government notices especially) leave the HTML page itself
-    almost empty and put the real content in a linked/embedded PDF - so
-    when the page's own text yields nothing, a PDF link found on it is
-    tried too before giving up.
     """
     try:
-        text, pdf_link, note = await _fetch_and_extract_text(url)
+        return await _scrape(url, gemini_api_key, gemini_model)
     except Exception:
         logger.exception("Scraper: unexpected error while scraping %s", url)
         return ScrapedInfo(source_url=url, note="Erreur inattendue pendant l'extraction.")
-
-    sections = extract_sections(text)
-
-    if not sections and pdf_link:
-        try:
-            pdf_text, _, pdf_note = await _fetch_and_extract_text(pdf_link)
-        except Exception:
-            logger.exception("Scraper: unexpected error while scraping linked PDF %s", pdf_link)
-            pdf_text, pdf_note = "", "Erreur inattendue pendant l'extraction du PDF."
-
-        pdf_sections = extract_sections(pdf_text)
-        if pdf_sections:
-            sections, note = pdf_sections, None
-        elif pdf_note:
-            note = pdf_note
-
-    if not sections and note is None:
-        note = "Aucune information clé détectée automatiquement."
-
-    if note:
-        logger.info("Scraper: %s -> %s", url, note)
-
-    return ScrapedInfo(source_url=url, sections=sections, note=note)
