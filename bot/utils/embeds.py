@@ -66,6 +66,28 @@ def build_announcement_embed(announcement: Announcement) -> discord.Embed:
     return embed
 
 
+EMBED_FIELD_LIMIT = 1024
+EMBED_TEXT_BUDGET = 5500
+
+
+def _split_for_fields(text: str, limit: int = EMBED_FIELD_LIMIT) -> list[str]:
+    """Split text on line boundaries into pieces that fit an embed field."""
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        if len(line) > limit:
+            line = line[: limit - 1] + "…"
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def build_scraped_info_embed(
     source_url: str,
     sections: dict[str, str],
@@ -81,8 +103,14 @@ def build_scraped_info_embed(
         colour=discord.Colour.light_grey(),
     )
     if sections:
+        budget = EMBED_TEXT_BUDGET
         for label, excerpt in sections.items():
-            embed.add_field(name=label, value=excerpt[:1024], inline=False)
+            for number, chunk in enumerate(_split_for_fields(excerpt)):
+                name = label if number == 0 else f"{label} (suite)"
+                budget -= len(name) + len(chunk)
+                if budget < 0:
+                    break
+                embed.add_field(name=name, value=chunk, inline=False)
     else:
         embed.description = note or "Aucune information n'a pu être extraite automatiquement."
 
