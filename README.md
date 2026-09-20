@@ -20,6 +20,7 @@ Scholarship opportunities move fast between friends: someone finds one, shares a
 - **Urgency at a glance** — the opportunity's embed shifts 🟢 → 🟠 → 🔴 as the deadline approaches
 - **Auto-discovery** — periodically checks a watched listing page (e.g. the ministry's scholarship announcements) and posts new ones in `#opportunities` as soon as they appear, keeping a baseline state so it never floods the channel with what was already there
 - **Auto-extracted info** — when an opportunity is created, its link is read (the page, plus the PDFs and "eligibility"-style pages it points to) and the key info — documents to provide, eligibility, deadline, benefits, how to apply — is posted as the dedicated channel's first message. With a free Gemini API key it reads any layout and even scanned PDFs; without one (or if the API is unavailable) it falls back to a keyword-based extractor, and says so clearly when nothing can be extracted
+- **`/opportunity-backfill`** — for server managers: posts the extracted info in the channels of open opportunities that don't have it yet (created before the feature, or whose extraction failed). Quota-friendly: at most 10 extractions per run, paced, stopping at the first quota error, so it can safely be run again until everything is covered
 
 ## Tech stack
 
