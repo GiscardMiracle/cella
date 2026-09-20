@@ -47,6 +47,8 @@ class ScrapedInfo:
     sections: dict[str, str] = field(default_factory=dict)
     note: Optional[str] = None
     ai_generated: bool = False
+    ai_failed: bool = False
+    quota_exceeded: bool = False
 
 
 @dataclass
@@ -135,7 +137,10 @@ def _merge_sections(pages: list[Page]) -> dict[str, str]:
 
 
 async def _scrape(
-    url: str, gemini_api_key: Optional[str], gemini_model: Optional[str]
+    url: str,
+    gemini_api_key: Optional[str],
+    gemini_model: Optional[str],
+    fallback_to_keywords: bool,
 ) -> ScrapedInfo:
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
     async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": USER_AGENT}) as session:
@@ -159,7 +164,17 @@ async def _scrape(
     ai_generated = False
     if gemini_api_key:
         documents = [gemini_service.Document(name=page.url, text=page.text, pdf=page.pdf) for page in pages]
-        sections = await gemini_service.extract_sections(documents, gemini_api_key, gemini_model) or {}
+        try:
+            sections = await gemini_service.extract_sections(documents, gemini_api_key, gemini_model) or {}
+        except gemini_service.GeminiError as error:
+            logger.warning("Scraper: Gemini unavailable for %s: %s", url, error)
+            if not fallback_to_keywords:
+                return ScrapedInfo(
+                    source_url=url,
+                    note="L'IA n'a pas pu lire ce lien.",
+                    ai_failed=True,
+                    quota_exceeded=error.quota,
+                )
         ai_generated = bool(sections)
     if not sections:
         sections = _merge_sections(pages)
@@ -187,15 +202,24 @@ async def _scrape(
 
 
 async def scrape_opportunity(
-    url: str, *, gemini_api_key: Optional[str] = None, gemini_model: Optional[str] = None
+    url: str,
+    *,
+    gemini_api_key: Optional[str] = None,
+    gemini_model: Optional[str] = None,
+    fallback_to_keywords: bool = True,
 ) -> ScrapedInfo:
     """
     Best-effort extraction. Never raises - callers can post the result
     (sections, or its fallback note) without worrying about network or
     parsing failures.
+
+    When Gemini is configured but fails, the keyword extractor takes over -
+    unless fallback_to_keywords is False, in which case the result is flagged
+    ai_failed (and quota_exceeded for a rate limit) with no sections. Callers
+    that would rather retry later than post a weaker result use that.
     """
     try:
-        return await _scrape(url, gemini_api_key, gemini_model)
+        return await _scrape(url, gemini_api_key, gemini_model, fallback_to_keywords)
     except Exception:
         logger.exception("Scraper: unexpected error while scraping %s", url)
         return ScrapedInfo(source_url=url, note="Erreur inattendue pendant l'extraction.")

@@ -14,7 +14,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from bot.services import gemini_service
-from bot.services.gemini_service import Document, extract_sections
+from bot.services.gemini_service import Document, GeminiError, extract_sections
 
 ANSWER = {
     "documents": ["Copie du passeport", "Relevé de notes", "Copie du passeport"],
@@ -120,41 +120,56 @@ class GeminiServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await extract_sections([Document("page")], "key"))
         self.assertEqual(self.requests, [])
 
-    async def test_rate_limit_returns_none(self):
+    async def test_rate_limit_raises_a_quota_error_with_the_reason(self):
         self.reply = (429, {"error": {"code": "429", "message": "quota exceeded", "status": "RESOURCE_EXHAUSTED"}})
-        with self.assertLogs("bot.services.gemini_service", "WARNING") as logs:
-            self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
-        self.assertIn("429", logs.output[0])
-        self.assertIn("quota exceeded", logs.output[0])
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key")
+        self.assertTrue(raised.exception.quota)
+        self.assertIn("429", str(raised.exception))
+        self.assertIn("quota exceeded", str(raised.exception))
 
-    async def test_server_error_with_a_non_json_body_returns_none(self):
+    async def test_resource_exhausted_is_a_quota_error_whatever_the_http_status(self):
+        self.reply = (503, {"error": {"message": "limit", "status": "RESOURCE_EXHAUSTED"}})
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key")
+        self.assertTrue(raised.exception.quota)
+
+    async def test_other_http_errors_are_not_quota_errors(self):
+        self.reply = (400, {"error": {"message": "API key not valid", "status": "INVALID_ARGUMENT"}})
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key")
+        self.assertFalse(raised.exception.quota)
+        self.assertIn("API key not valid", str(raised.exception))
+
+    async def test_server_error_with_a_non_json_body_raises(self):
         self.reply = (502, "<html>Bad gateway</html>")
-        with self.assertLogs("bot.services.gemini_service", "WARNING") as logs:
-            self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
-        self.assertIn("HTTP 502", logs.output[0])
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key")
+        self.assertIn("HTTP 502", str(raised.exception))
+        self.assertFalse(raised.exception.quota)
 
-    async def test_success_status_with_a_non_json_body_returns_none(self):
+    async def test_success_status_with_a_non_json_body_raises(self):
         self.reply = (200, "<html>Maintenance</html>")
-        with self.assertLogs("bot.services.gemini_service", "WARNING"):
-            self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
+        with self.assertRaises(GeminiError):
+            await extract_sections([Document("page", text="x")], "key")
 
-    async def test_unfinished_interaction_returns_none(self):
+    async def test_unfinished_interaction_raises(self):
         self.reply = (200, interaction(ANSWER, status="failed"))
-        with self.assertLogs("bot.services.gemini_service", "WARNING") as logs:
-            self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
-        self.assertIn("failed", logs.output[0])
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key")
+        self.assertIn("failed", str(raised.exception))
 
-    async def test_answer_that_is_not_json_returns_none(self):
+    async def test_answer_that_is_not_json_raises(self):
         body = interaction(ANSWER)
         body["steps"][1]["content"][0]["text"] = "Voici les infos : ..."
         self.reply = (200, body)
-        with self.assertLogs("bot.services.gemini_service", "WARNING"):
-            self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
+        with self.assertRaises(GeminiError):
+            await extract_sections([Document("page", text="x")], "key")
 
-    async def test_answer_with_no_model_output_returns_none(self):
+    async def test_answer_with_no_model_output_raises(self):
         self.reply = (200, {"status": "completed", "steps": []})
-        with self.assertLogs("bot.services.gemini_service", "WARNING"):
-            self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
+        with self.assertRaises(GeminiError):
+            await extract_sections([Document("page", text="x")], "key")
 
     async def test_falls_back_to_the_candidates_response_shape(self):
         self.reply = (200, {"candidates": [{"content": {"parts": [{"text": json.dumps(ANSWER)}]}}]})
@@ -181,10 +196,11 @@ class GeminiServiceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class UnreachableServerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_connection_error_returns_none(self):
+    async def test_connection_error_raises_a_non_quota_error(self):
         with patch.object(gemini_service, "GEMINI_API_URL", "http://127.0.0.1:9/v1beta/interactions"):
-            with self.assertLogs("bot.services.gemini_service", "WARNING"):
-                self.assertIsNone(await extract_sections([Document("page", text="x")], "key"))
+            with self.assertRaises(GeminiError) as raised:
+                await extract_sections([Document("page", text="x")], "key")
+        self.assertFalse(raised.exception.quota)
 
 
 if __name__ == "__main__":

@@ -166,6 +166,29 @@ class ScrapeOpportunityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(info.ai_generated)
         self.assertIn("Conditions d'éligibilité", info.sections)
 
+    async def test_without_fallback_a_gemini_failure_yields_no_sections(self):
+        self.gemini_reply = (500, {"error": {"message": "boom"}})
+
+        info = await scrape_opportunity(self.url("/bourse"), gemini_api_key="key", fallback_to_keywords=False)
+
+        self.assertEqual(info.sections, {})
+        self.assertTrue(info.ai_failed)
+        self.assertFalse(info.quota_exceeded)
+
+    async def test_without_fallback_a_rate_limit_is_reported_as_quota(self):
+        self.gemini_reply = (429, {"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+
+        info = await scrape_opportunity(self.url("/bourse"), gemini_api_key="key", fallback_to_keywords=False)
+
+        self.assertTrue(info.ai_failed)
+        self.assertTrue(info.quota_exceeded)
+
+    async def test_without_fallback_and_without_a_key_keywords_still_apply(self):
+        info = await scrape_opportunity(self.url("/bourse"), fallback_to_keywords=False)
+
+        self.assertFalse(info.ai_failed)
+        self.assertIn("Pièces à fournir", info.sections)
+
     async def test_falls_back_to_keywords_when_gemini_finds_nothing(self):
         self.gemini_reply = (200, gemini_answer({"documents": [], "deadline": ""}))
 

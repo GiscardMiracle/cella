@@ -4,15 +4,15 @@ Gemini service: asks Google's Gemini API (free tier, no billing account
 needed) to read an opportunity's page and PDFs and return its key sections
 as structured JSON.
 
-Best-effort by design: any failure (no quota, network, unexpected answer)
-returns None so the caller can fall back to the keyword extractor.
+When the API can't be used (quota, network, unexpected answer) it raises
+GeminiError, so the caller decides whether to fall back to the keyword
+extractor or to stop.
 Author: Giscard Adjanon
 """
 
 import asyncio
 import base64
 import json
-import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -54,7 +54,12 @@ RESPONSE_SCHEMA = {
     "required": ["documents", "eligibility", "deadline", "benefits", "how_to_apply"],
 }
 
-logger = logging.getLogger(__name__)
+class GeminiError(Exception):
+    """The Gemini API couldn't be used. `quota` is True for a rate or quota limit."""
+
+    def __init__(self, message: str, quota: bool = False):
+        super().__init__(message)
+        self.quota = quota
 
 
 @dataclass
@@ -139,26 +144,27 @@ def _error_message(body: Any) -> str:
     return ""
 
 
-def _parse_response(body: Any) -> Optional[dict[str, str]]:
+def _error_status(body: Any) -> str:
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        return str(body["error"].get("status", ""))
+    return ""
+
+
+def _parse_response(body: Any) -> dict[str, str]:
     if not isinstance(body, dict):
-        logger.warning("Gemini: unexpected response shape.")
-        return None
+        raise GeminiError("unexpected response shape")
     if body.get("status") not in (None, "completed"):
-        logger.warning("Gemini: interaction ended with status %s.", body.get("status"))
-        return None
+        raise GeminiError(f"interaction ended with status {body.get('status')}")
 
     text = _output_text(body)
     if not text:
-        logger.warning("Gemini: response contained no text.")
-        return None
+        raise GeminiError("response contained no text")
     try:
         data = json.loads(text)
     except ValueError:
-        logger.warning("Gemini: response was not valid JSON.")
-        return None
+        raise GeminiError("response was not valid JSON") from None
     if not isinstance(data, dict):
-        logger.warning("Gemini: response JSON was not an object.")
-        return None
+        raise GeminiError("response JSON was not an object")
     return _to_sections(data)
 
 
@@ -166,7 +172,8 @@ async def extract_sections(
     documents: list[Document], api_key: str, model: Optional[str] = None
 ) -> Optional[dict[str, str]]:
     """Key sections of the documents, keyed like extractor_service.SECTION_LABELS
-    (empty categories left out). None when the API couldn't be used."""
+    (empty categories left out, so {} means the model found nothing). None when
+    there was nothing to send. Raises GeminiError when the API couldn't be used."""
     input_parts = _build_input(documents)
     if not input_parts:
         return None
@@ -186,10 +193,10 @@ async def extract_sections(
             async with session.post(GEMINI_API_URL, json=payload, headers=headers) as response:
                 raw = await response.text()
                 if response.status != 200:
-                    logger.warning("Gemini: HTTP %d %s", response.status, _error_message(_load_json(raw)))
-                    return None
+                    body = _load_json(raw)
+                    quota = response.status == 429 or _error_status(body) == "RESOURCE_EXHAUSTED"
+                    raise GeminiError(f"HTTP {response.status} {_error_message(body)}".strip(), quota=quota)
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
-        logger.warning("Gemini: request failed: %s", error)
-        return None
+        raise GeminiError(f"request failed: {type(error).__name__} {error}".strip()) from error
 
     return _parse_response(_load_json(raw))
