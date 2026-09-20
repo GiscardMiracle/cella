@@ -255,9 +255,10 @@ class BackfillReport:
         return "\n".join(lines)[:1900] or "Aucune opportunité ouverte à traiter."
 
 
-def _bot_can_post(guild: discord.Guild, channel: discord.abc.GuildChannel) -> bool:
+def _missing_permissions(guild: discord.Guild, channel: discord.abc.GuildChannel) -> list[str]:
     perms = channel.permissions_for(guild.me)
-    return perms.view_channel and perms.send_messages and perms.read_message_history
+    needed = ("view_channel", "send_messages", "read_message_history")
+    return [name for name in needed if not getattr(perms, name)]
 
 
 async def _regain_access(
@@ -268,6 +269,11 @@ async def _regain_access(
     reach the channel and give itself a permanent overwrite, then it leaves."""
     role = guild.get_role(opportunity.role_id)
     if role is None:
+        logger.warning(
+            "Backfill: role %d of opportunity %d not found, cannot regain access to its channel.",
+            opportunity.role_id,
+            opportunity.id,
+        )
         return None
 
     joined = False
@@ -275,7 +281,14 @@ async def _regain_access(
         await guild.me.add_roles(role)
         joined = True
         channel = await guild.fetch_channel(opportunity.channel_id)
-        return channel if await permissions.grant_bot_access(channel) else None
+        if await permissions.grant_bot_access(channel):
+            return channel
+        logger.warning(
+            "Backfill: even after joining role %d, the bot could not give itself access to channel %d.",
+            opportunity.role_id,
+            opportunity.channel_id,
+        )
+        return None
     except discord.HTTPException:
         logger.exception("Backfill: could not regain access to channel %d.", opportunity.channel_id)
         return None
@@ -295,12 +308,26 @@ async def _channel_for_backfill(guild: discord.Guild, opportunity: Opportunity):
         except discord.NotFound:
             return BackfillOutcome.CHANNEL_MISSING
         except discord.Forbidden:
-            channel = await _regain_access(guild, opportunity)
-            return channel if channel is not None else BackfillOutcome.NO_ACCESS
+            logger.warning(
+                "Backfill: channel %d of opportunity %d is not visible to the bot, trying its role.",
+                opportunity.channel_id,
+                opportunity.id,
+            )
+            return await _regain_access(guild, opportunity) or BackfillOutcome.NO_ACCESS
 
-    if not _bot_can_post(guild, channel) and not await permissions.grant_bot_access(channel):
-        return BackfillOutcome.NO_ACCESS
-    return channel
+    missing = _missing_permissions(guild, channel)
+    if not missing:
+        return channel
+
+    logger.warning(
+        "Backfill: the bot lacks %s in channel %d (opportunity %d).",
+        ", ".join(missing),
+        opportunity.channel_id,
+        opportunity.id,
+    )
+    if await permissions.grant_bot_access(channel):
+        return channel
+    return await _regain_access(guild, opportunity) or BackfillOutcome.NO_ACCESS
 
 
 async def _has_scraped_info(channel: discord.TextChannel, bot_user: discord.abc.User) -> bool:

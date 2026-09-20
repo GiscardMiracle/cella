@@ -282,14 +282,44 @@ class BackfillTests(unittest.IsolatedAsyncioTestCase):
         channel.set_permissions.assert_awaited_once()
         self.guild.me.add_roles.assert_not_awaited()
 
-    async def test_no_access_when_a_visible_channel_cannot_be_fixed(self):
+    async def test_visible_channel_the_bot_cannot_fix_directly_is_reached_through_the_role(self):
+        visible = make_channel(self.guild, can_post=False)
+        visible.set_permissions.side_effect = http_error(discord.Forbidden)
+        reached = make_channel(self.guild)
+        self.channels(visible)
+        self.guild.fetch_channel.return_value = reached
+
+        report = await self.run_backfill([make_opportunity(1)])
+
+        self.assertEqual(report.results[0][1], BackfillOutcome.POSTED)
+        self.guild.me.add_roles.assert_awaited_once_with(self.role)
+        reached.set_permissions.assert_awaited_once()
+        self.guild.me.remove_roles.assert_awaited_once_with(self.role)
+        reached.send.assert_awaited_once()
+
+    async def test_no_access_when_a_visible_channel_cannot_be_fixed_any_way(self):
         channel = make_channel(self.guild, can_post=False)
         channel.set_permissions.side_effect = http_error(discord.Forbidden)
         self.channels(channel)
+        self.guild.get_role.return_value = None
 
         report = await self.run_backfill([make_opportunity(1)])
 
         self.assertEqual(report.results[0][1], BackfillOutcome.NO_ACCESS)
+
+    async def test_the_reason_for_a_refusal_is_logged(self):
+        channel = make_channel(self.guild, can_post=False)
+        channel.set_permissions.side_effect = http_error(discord.Forbidden)
+        self.channels(channel)
+        self.guild.get_role.return_value = None
+        logging.getLogger("bot.services").setLevel(logging.WARNING)
+
+        with self.assertLogs("bot.services.opportunity_service", "WARNING") as logs:
+            await self.run_backfill([make_opportunity(1)])
+
+        output = "\n".join(logs.output)
+        self.assertIn("lacks view_channel, send_messages, read_message_history", output)
+        self.assertIn("role 3001 of opportunity 1 not found", output)
 
     async def test_a_refused_send_is_reported_not_raised(self):
         channel = make_channel(self.guild)
