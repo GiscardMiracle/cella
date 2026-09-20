@@ -44,6 +44,21 @@ async def setup_channel_permissions(channel: discord.TextChannel, role: discord.
         print(f"Error occurred while setting channel permissions: {e}")
         return False
 
+async def grant_bot_access(channel: discord.TextChannel):
+    try:
+        overwrite = discord.PermissionOverwrite()
+        overwrite.view_channel = True
+        overwrite.send_messages = True
+        overwrite.read_message_history = True
+        await channel.set_permissions(channel.guild.me, overwrite=overwrite)
+        return True
+    except discord.Forbidden:
+        print(f"Cella does not have permission to grant itself access to {channel}.")
+        return False
+    except Exception as e:
+        print(f"Error occurred while granting the bot access to {channel}: {e}")
+        return False
+
 async def grant_access(member: discord.Member, role: discord.Role):
     try:
         await member.add_roles(role)

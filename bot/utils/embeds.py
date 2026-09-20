@@ -66,6 +66,7 @@ def build_announcement_embed(announcement: Announcement) -> discord.Embed:
     return embed
 
 
+SCRAPED_INFO_TITLE = "Infos extraites automatiquement du lien"
 EMBED_FIELD_LIMIT = 1024
 EMBED_TEXT_BUDGET = 5500
 
@@ -98,7 +99,7 @@ def build_scraped_info_embed(
     Build a Discord embed presenting info auto-extracted from an opportunity's link.
     """
     embed = discord.Embed(
-        title="Infos extraites automatiquement du lien",
+        title=SCRAPED_INFO_TITLE,
         url=source_url,
         colour=discord.Colour.light_grey(),
     )
