@@ -21,7 +21,7 @@ class Config:
     watch_url: Optional[str]            # ministry listing page to watch for new scholarship announcements
     watch_interval_hours: int           # how often to check watch_url
     gemini_api_key: Optional[str]       # enables AI extraction of opportunity info (free tier); keyword extraction otherwise
-    gemini_model: Optional[str]         # overrides the default Gemini model
+    gemini_model: Optional[str]         # overrides the default chain of Gemini models (comma-separated, tried in order)
 
 def _require(var_name: str) -> str:
     """Retrieve an environment variable or exit if not found."""

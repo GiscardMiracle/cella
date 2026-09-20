@@ -13,6 +13,7 @@ Author: Giscard Adjanon
 import asyncio
 import base64
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -22,7 +23,13 @@ import aiohttp
 from bot.services.extractor_service import MAX_FIELD_CHARS, shorten_text
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
-DEFAULT_MODEL = "gemini-3.5-flash"
+DEFAULT_MODELS = (
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+)
 REQUEST_TIMEOUT_SECONDS = 90
 MAX_TEXT_CHARS_PER_DOCUMENT = 30_000
 MAX_PDF_BYTES = 10 * 1024 * 1024
@@ -54,12 +61,17 @@ RESPONSE_SCHEMA = {
     "required": ["documents", "eligibility", "deadline", "benefits", "how_to_apply"],
 }
 
-class GeminiError(Exception):
-    """The Gemini API couldn't be used. `quota` is True for a rate or quota limit."""
+logger = logging.getLogger(__name__)
 
-    def __init__(self, message: str, quota: bool = False):
+
+class GeminiError(Exception):
+    """The Gemini API couldn't be used. `quota` is True for a rate or quota
+    limit, `model_unavailable` when the requested model doesn't exist."""
+
+    def __init__(self, message: str, quota: bool = False, model_unavailable: bool = False):
         super().__init__(message)
         self.quota = quota
+        self.model_unavailable = model_unavailable
 
 
 @dataclass
@@ -168,18 +180,17 @@ def _parse_response(body: Any) -> dict[str, str]:
     return _to_sections(data)
 
 
-async def extract_sections(
-    documents: list[Document], api_key: str, model: Optional[str] = None
-) -> Optional[dict[str, str]]:
-    """Key sections of the documents, keyed like extractor_service.SECTION_LABELS
-    (empty categories left out, so {} means the model found nothing). None when
-    there was nothing to send. Raises GeminiError when the API couldn't be used."""
-    input_parts = _build_input(documents)
-    if not input_parts:
-        return None
+def _model_chain(model: Optional[str]) -> list[str]:
+    """Models to try in order: a comma-separated list, or the default chain."""
+    chosen = [name.strip() for name in (model or "").split(",") if name.strip()]
+    return chosen or list(DEFAULT_MODELS)
 
+
+async def _request_sections(
+    input_parts: list[dict[str, Any]], api_key: str, model: str
+) -> dict[str, str]:
     payload = {
-        "model": model or DEFAULT_MODEL,
+        "model": model,
         "system_instruction": SYSTEM_INSTRUCTION,
         "input": input_parts,
         "response_format": {"type": "text", "mime_type": "application/json", "schema": RESPONSE_SCHEMA},
@@ -195,8 +206,41 @@ async def extract_sections(
                 if response.status != 200:
                     body = _load_json(raw)
                     quota = response.status == 429 or _error_status(body) == "RESOURCE_EXHAUSTED"
-                    raise GeminiError(f"HTTP {response.status} {_error_message(body)}".strip(), quota=quota)
+                    raise GeminiError(
+                        f"HTTP {response.status} {_error_message(body)}".strip(),
+                        quota=quota,
+                        model_unavailable=response.status == 404,
+                    )
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
         raise GeminiError(f"request failed: {type(error).__name__} {error}".strip()) from error
 
     return _parse_response(_load_json(raw))
+
+
+async def extract_sections(
+    documents: list[Document], api_key: str, model: Optional[str] = None
+) -> Optional[dict[str, str]]:
+    """Key sections of the documents, keyed like extractor_service.SECTION_LABELS
+    (empty categories left out, so {} means the model found nothing). None when
+    there was nothing to send. Raises GeminiError when the API couldn't be used.
+
+    The free tier's daily quota is per model, so when a model has none left
+    (or doesn't exist) the next one in the chain is tried. Any other failure
+    stops right away: the next model would fail the same way."""
+    input_parts = _build_input(documents)
+    if not input_parts:
+        return None
+
+    quota_hit = False
+    last_error: Optional[GeminiError] = None
+    for name in _model_chain(model):
+        try:
+            return await _request_sections(input_parts, api_key, name)
+        except GeminiError as error:
+            if not (error.quota or error.model_unavailable):
+                raise
+            quota_hit = quota_hit or error.quota
+            last_error = error
+            logger.info("Gemini: %s unavailable (%s), trying the next model.", name, error)
+
+    raise GeminiError(f"no model left to try: {last_error}", quota=quota_hit)

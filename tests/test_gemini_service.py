@@ -39,10 +39,12 @@ class GeminiServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.requests = []
         self.reply = (200, interaction(ANSWER))
+        self.replies_by_model = {}
 
         async def handler(request):
-            self.requests.append({"headers": request.headers, "body": await request.json()})
-            status, body = self.reply
+            payload = await request.json()
+            self.requests.append({"headers": request.headers, "body": payload})
+            status, body = self.replies_by_model.get(payload["model"], self.reply)
             if isinstance(body, str):
                 return web.Response(status=status, text=body)
             return web.json_response(body, status=status)
@@ -87,7 +89,7 @@ class GeminiServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_uses_the_default_model_when_none_is_given(self):
         await extract_sections([Document("page", text="x")], "key")
-        self.assertEqual(self.requests[0]["body"]["model"], gemini_service.DEFAULT_MODEL)
+        self.assertEqual(self.requests[0]["body"]["model"], gemini_service.DEFAULT_MODELS[0])
 
     async def test_api_key_is_never_part_of_the_body(self):
         await extract_sections([Document("page", text="x")], "secret-key")
@@ -170,6 +172,74 @@ class GeminiServiceTests(unittest.IsolatedAsyncioTestCase):
         self.reply = (200, {"status": "completed", "steps": []})
         with self.assertRaises(GeminiError):
             await extract_sections([Document("page", text="x")], "key")
+
+    def models_asked(self):
+        return [request["body"]["model"] for request in self.requests]
+
+    async def test_moves_to_the_next_model_when_one_is_out_of_quota(self):
+        quota = (429, {"error": {"message": "20 per day", "status": "RESOURCE_EXHAUSTED"}})
+        self.replies_by_model = {"a": quota}
+
+        sections = await extract_sections([Document("page", text="x")], "key", "a,b,c")
+
+        self.assertEqual(self.models_asked(), ["a", "b"])
+        self.assertEqual(sections["deadline"], "15 octobre 2027")
+
+    async def test_skips_a_model_that_does_not_exist(self):
+        self.replies_by_model = {"a": (404, {"error": {"message": "not found", "status": "NOT_FOUND"}})}
+
+        sections = await extract_sections([Document("page", text="x")], "key", "a,b")
+
+        self.assertEqual(self.models_asked(), ["a", "b"])
+        self.assertIn("deadline", sections)
+
+    async def test_any_other_error_stops_the_chain(self):
+        self.replies_by_model = {"a": (400, {"error": {"message": "API key not valid"}})}
+
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key", "a,b")
+
+        self.assertEqual(self.models_asked(), ["a"])
+        self.assertFalse(raised.exception.quota)
+
+    async def test_a_model_whose_answer_is_unusable_stops_the_chain(self):
+        self.replies_by_model = {"a": (200, {"status": "failed"})}
+
+        with self.assertRaises(GeminiError):
+            await extract_sections([Document("page", text="x")], "key", "a,b")
+
+        self.assertEqual(self.models_asked(), ["a"])
+
+    async def test_every_model_out_of_quota_raises_a_quota_error(self):
+        self.reply = (429, {"error": {"message": "20 per day", "status": "RESOURCE_EXHAUSTED"}})
+
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key", "a,b,c")
+
+        self.assertEqual(self.models_asked(), ["a", "b", "c"])
+        self.assertTrue(raised.exception.quota)
+
+    async def test_every_model_missing_is_not_reported_as_a_quota_problem(self):
+        self.reply = (404, {"error": {"message": "not found"}})
+
+        with self.assertRaises(GeminiError) as raised:
+            await extract_sections([Document("page", text="x")], "key", "a,b")
+
+        self.assertFalse(raised.exception.quota)
+
+    async def test_model_list_is_trimmed_and_ignores_empty_entries(self):
+        self.replies_by_model = {"a": (429, {"error": {"status": "RESOURCE_EXHAUSTED"}})}
+
+        await extract_sections([Document("page", text="x")], "key", " a , ,b ")
+
+        self.assertEqual(self.models_asked(), ["a", "b"])
+
+    async def test_default_chain_is_used_when_no_model_is_configured(self):
+        self.reply = (429, {"error": {"status": "RESOURCE_EXHAUSTED"}})
+
+        with self.assertRaises(GeminiError):
+            await extract_sections([Document("page", text="x")], "key")
+        self.assertEqual(self.models_asked(), list(gemini_service.DEFAULT_MODELS))
 
     async def test_falls_back_to_the_candidates_response_shape(self):
         self.reply = (200, {"candidates": [{"content": {"parts": [{"text": json.dumps(ANSWER)}]}}]})

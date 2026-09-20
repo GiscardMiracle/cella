@@ -62,7 +62,7 @@ You'll need a Discord application with a bot user, the **Server Members** privil
 Optional env vars:
 
 - `WATCH_URL` — a listing page to poll for new announcements (omit to disable the watcher), and `WATCH_INTERVAL_HOURS` (default `6`).
-- `GEMINI_API_KEY` — a free key from [Google AI Studio](https://aistudio.google.com/apikey) (no billing account needed) to enable AI extraction of opportunity info. Omit it and Cella uses its keyword extractor. `GEMINI_MODEL` overrides the default model.
+- `GEMINI_API_KEY` — a free key from [Google AI Studio](https://aistudio.google.com/apikey) (no billing account needed) to enable AI extraction of opportunity info. Omit it and Cella uses its keyword extractor. The free tier allows a limited number of requests per model per day, so Cella tries several models in turn when one runs out; `GEMINI_MODEL` overrides that list (comma-separated, tried in order).
 
 ## Tests
 
